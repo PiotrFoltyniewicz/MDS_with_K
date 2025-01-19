@@ -1,107 +1,99 @@
 from utility import * 
 from heapq import *
+import random
 
-# with removal
+class HeapNode():
+    def __init__(self, original):
+        self.original = original
+    
+    def __lt__(self, other):
+        return len(self.original.get_nodes_in_range()) > len(other.original.get_nodes_in_range())
 
-def reduce_graph(graph, nodes, k):
-   combined_to_remove = set()
-   combined_boundary = set()
-
-   for node in nodes:
-      if node in graph:
-         to_remove, boundary = get_nodes_in_range_plus_one(graph, node, k)
-         combined_to_remove.update(to_remove)
-         combined_boundary.update(boundary)
-
-   for bound_node in combined_boundary:
-      if bound_node in graph:
-         graph[bound_node].difference_update(combined_to_remove)
-
-   for node in combined_to_remove:
-      graph.pop(node, None)
-
-def initial_fill(graph, k):
-   output = set()
+    def __eq__(self, other):
+        return self.original == other.original
+    
+def reduce_graph(graph, del_node):
+    for neighbor in del_node.get_nodes_in_range():
+        neighbor.is_covered = True
+        graph.remove(neighbor)
+    
+def greedy_pick(graph):
+    solution = set()
+    pq = [HeapNode(node) for node in graph]
+    heapify(pq)
    
-   pq = []
-   degree_map = {}
-   
-   def update_priority_queue() -> None:
-      pq.clear()
-      for node in graph:
-         degree = len(get_nodes_in_range(graph, node, k))
-         degree_map[node] = degree
-         heappush(pq, (-degree, node))
-   
-   def remove_neighborhood(node: int) -> None:
+    while graph and pq:
+        best_node = heappop(pq).original
+        if best_node not in graph:
+            continue
+        solution.add(best_node)
+        reduce_graph(graph, best_node)
+    
+    return solution
 
-      nodes_to_remove, boundary = get_nodes_in_range_plus_one(graph, best_node, k)  
-
-      for bound_node in boundary:
-         if bound_node in graph:
-               graph[bound_node] -= nodes_to_remove
-               degree_map[bound_node] = len(graph[bound_node])
-               heappush(pq, (-degree_map[bound_node], bound_node))
-      
-      for node in nodes_to_remove:
-         if node in graph:
-               del graph[node]
-               degree_map.pop(node, None)
-   
-   update_priority_queue()
-   
-   while graph:
-      while pq and -pq[0][0] != degree_map.get(pq[0][1], 0):
-         heappop(pq)
+def leaf_reduction(graph):
+    init_sol = set()
+    i = 0
+    while i < len(graph):
+        node = graph[i]
+        if len(node.get_nearest()) == 0:
+            init_sol.add(node)
+            i += 1
+        elif len(node.get_nearest()) == 1:
+            best = max(node.nodes_in_range)
+            init_sol.add(best)
+            reduce_graph(graph, best)
+        else:
+            i += 1
          
-      if not pq:
-         update_priority_queue()
-         if not pq:
-               break
-               
-      _, best_node = heappop(pq)
-      
-      if best_node not in graph:
-         continue
-         
-      output.add(best_node)
-      remove_neighborhood(best_node)
-   
-   return output
+    return init_sol
 
-def create_initial_solution(graph, k):
-   init_sol = set()
-   neighborhood_sizes = {}
+def greedy_deconstruction(graph, nodes, percentage = 0.25):
+    temp_nodes = sorted(list(nodes), key= lambda node: node.cover_count)
+    first_idx = int(len(nodes) * percentage)
+    temp_nodes = temp_nodes[first_idx:]
+    temp_graph = clone_graph(graph)
+    temp_nodes = [temp_graph[node.id] for node in temp_nodes]
 
-   start_time = time.time()
+    for node in temp_nodes:
+        if node in temp_graph:
+            reduce_graph(temp_graph, node)
 
-   for node in graph:
-      if time.time() - start_time > 20:
-         init_sol.update(initial_fill(graph, k))
-         return init_sol
-      neighborhood_sizes[node] = len(get_nodes_in_range(graph, node, k))
+    return temp_graph, set(temp_nodes)
 
-   for node in list(graph.keys()):
-      if len(graph[node]) == 0:
-         init_sol.add(node)
-      elif len(graph[node]) == 1:
-         possible_nodes = get_nodes_in_range(graph, node, k)
+def random_deconstruction(graph, nodes, percentage = 0.2):
+    temp_graph = clone_graph(graph)
+    temp_nodes = [temp_graph[node.id] for node in nodes if random.random() < percentage]
 
-         best = max(possible_nodes, key=lambda candidate: neighborhood_sizes[candidate])
-         init_sol.add(best)
-   reduce_graph(graph, init_sol, k)
+    for node in temp_nodes:
+        if node in temp_graph:
+            reduce_graph(temp_graph, node)
 
-   # fill the rest of the graph using greedy pick
-   init_sol.update(initial_fill(graph, k))
-         
-   return init_sol
+    return temp_graph, set(temp_nodes)
 
-         
 
-def algorithm(graph, k):
-   best_solution = create_initial_solution(graph, k)
+def algorithm(original_graph, k):
+    start_time = time.time()
+    best_solution = set()
+    extend_graph(original_graph, k)
+    graph = clone_graph(original_graph)
 
-   return best_solution
+
+    best_solution.update(leaf_reduction(graph))
+    best_solution.update(greedy_pick(graph))
+
+    while time.time() - start_time < 20:
+        graph, nodes  = greedy_deconstruction(original_graph, best_solution)
+        nodes.update(greedy_pick(graph))
+        if len(nodes) < len(best_solution):
+            best_solution = nodes
+
+        graph, nodes  = random_deconstruction(original_graph, best_solution)
+        nodes.update(greedy_pick(graph))
+        if len(nodes) < len(best_solution):
+            best_solution = nodes
+
+    return best_solution
 
 
 heuristic_tester(algorithm)
