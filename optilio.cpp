@@ -19,101 +19,140 @@ public:
 
 double start_time;
 bool terminate_flag = false;
+std::random_device rd;
+std::mt19937 gen;
 
-// bfs which gets list of outer nodes in range k and also number of nodes covered by start_node
-// such approach gives worse results, than full bfs, however in later calculations it is much faster
-std::pair<std::vector<Node *>, int> get_outer_in_range(Node *start_node, int k)
+bool check_time()
+{
+    if ((std::chrono::steady_clock::now().time_since_epoch().count() / 1e9) - start_time >= 28)
+    {
+        terminate_flag = true;
+        return true;
+    }
+    return false;
+}
+
+// get all nodes in range k, and also number of uncovered nodes in this range
+std::pair<std::vector<Node *>, int> get_nodes_in_range(Node *start_node, int k)
 {
     std::vector<Node *> output;
-    std::queue<std::pair<Node *, int>> q;
+    std::queue<Node *> q;
+    std::vector<int> distances;
     int uncovered = 0;
     std::unordered_set<int> visited;
+    output.reserve(100);
+    visited.reserve(1000);
+    q.push(start_node);
+    visited.insert(start_node->id);
+    distances.push_back(0);
+    int current_distance = 0;
+    size_t nodes_at_current_level = 1;
+    size_t nodes_at_next_level = 0;
 
-    q.push({start_node, 0});
-
-    while (!q.empty())
+    while (!q.empty() && current_distance <= k)
     {
-        auto [node, dist] = q.front();
+        Node *node = q.front();
         q.pop();
+        nodes_at_current_level--;
+
+        output.push_back(node);
 
         if (!node->is_covered)
         {
             uncovered++;
         }
 
-        if (dist == k)
+        if (current_distance < k)
         {
-            output.push_back(node);
-            visited.insert(node->id);
-            if (!node->is_covered)
+            Node **neighbor_end = node->neighbors.data() + node->neighbors.size();
+            for (Node **neighbor_ptr = node->neighbors.data(); neighbor_ptr != neighbor_end; ++neighbor_ptr)
             {
-                uncovered++;
+                Node *neighbor = *neighbor_ptr;
+                if (visited.insert(neighbor->id).second)
+                {
+                    q.push(neighbor);
+                    nodes_at_next_level++;
+                }
             }
         }
-        else if (dist < k)
+
+        if (nodes_at_current_level == 0)
         {
-            for (Node *neighbor : node->neighbors)
-            {
-                if (visited.find(neighbor->id) != visited.end())
-                {
-                    continue;
-                }
-                visited.insert(neighbor->id);
-                q.push({neighbor, dist + 1});
-            }
+            current_distance++;
+            nodes_at_current_level = nodes_at_next_level;
+            nodes_at_next_level = 0;
         }
     }
-
     return {output, uncovered};
 }
 
 // marks all nodes in range k as covered
 void cover_nodes(Node *start_node, int k)
 {
-    std::queue<std::pair<Node *, int>> q;
+    std::queue<Node *> q;
     std::unordered_set<int> visited;
 
-    q.push({start_node, 0});
+    visited.reserve(1000);
 
-    while (!q.empty())
+    q.push(start_node);
+    visited.insert(start_node->id);
+    start_node->is_covered = true;
+
+    int current_distance = 0;
+    size_t nodes_at_current_level = 1;
+    size_t nodes_at_next_level = 0;
+
+    while (!q.empty() && current_distance <= k)
     {
-        auto [node, dist] = q.front();
+        Node *node = q.front();
         q.pop();
-        node->is_covered = true;
+        nodes_at_current_level--;
 
-        if (dist == k)
+        if (current_distance < k)
         {
-            visited.insert(node->id);
-            node->is_covered = true;
-        }
-        else if (dist < k)
-        {
-            for (Node *neighbor : node->neighbors)
+            Node **neighbor_end = node->neighbors.data() + node->neighbors.size();
+            for (Node **neighbor_ptr = node->neighbors.data(); neighbor_ptr != neighbor_end; ++neighbor_ptr)
             {
-                if (visited.find(neighbor->id) != visited.end())
+                Node *neighbor = *neighbor_ptr;
+                if (visited.insert(neighbor->id).second)
                 {
-                    continue;
+                    neighbor->is_covered = true;
+                    q.push(neighbor);
+                    nodes_at_next_level++;
                 }
-                visited.insert(neighbor->id);
-                q.push({neighbor, dist + 1});
             }
+        }
+
+        if (nodes_at_current_level == 0)
+        {
+            current_distance++;
+            nodes_at_current_level = nodes_at_next_level;
+            nodes_at_next_level = 0;
         }
     }
 }
 
-// automatically adds nodes without neighbors to the solution
-// then for each nodes with one neighbor (leaf node)
+// faster cover if we give vector of nodes as input
+void cover_vector(std::vector<Node *> &nodes)
+{
+    for (Node *node : nodes)
+    {
+        node->is_covered = true;
+    }
+}
+
+// 1. automatically adds nodes without neighbors to the solution
+// 2. then for each nodes with one neighbor (leaf node)
 // calculates the best node from range k to add to solution
 
-std::vector<Node *> leaf_reduction(std::vector<Node *> &graph, int k)
+std::vector<Node *> reduction(std::vector<Node *> &graph, int k)
 {
     std::vector<Node *> initial_solution;
 
     for (Node *node : graph)
     {
-        if ((std::chrono::steady_clock::now().time_since_epoch().count() / 1e9) - start_time >= 27)
+        if (check_time())
         {
-            terminate_flag = true;
             return graph;
         }
 
@@ -127,17 +166,21 @@ std::vector<Node *> leaf_reduction(std::vector<Node *> &graph, int k)
         }
         else if (node->neighbors.size() == 1)
         {
-            auto [possible_nodes, dummy_cover_count] = get_outer_in_range(node, k);
+            auto [possible_nodes, dummy_cover_count] = get_nodes_in_range(node, k);
 
             // initially we add the only neighbor of leaf node
             Node *best_node = node->neighbors[0];
-            auto [dummy_node, current_cover] = get_outer_in_range(best_node, k);
+            auto [dummy_node, current_cover] = get_nodes_in_range(best_node, k);
             int highest_cover = current_cover;
 
             // my mind is gone, so let's say this is a medieval tournament
             for (Node *knight : possible_nodes)
             {
-                auto [_, cover_count] = get_outer_in_range(knight, k);
+                if (check_time())
+                {
+                    return graph;
+                }
+                auto [_, cover_count] = get_nodes_in_range(knight, k);
                 if (cover_count > highest_cover)
                 {
                     best_node = knight;
@@ -151,6 +194,22 @@ std::vector<Node *> leaf_reduction(std::vector<Node *> &graph, int k)
     return initial_solution;
 }
 
+// bad but quick solution
+std::vector<Node *> ultra_greedy(std::vector<Node *> &graph, int k)
+{
+    std::vector<Node *> solution;
+
+    for (Node *node : graph)
+    {
+        if (node->is_covered)
+            continue;
+
+        solution.push_back(node);
+        cover_nodes(node, k);
+    }
+    return solution;
+}
+
 // goes through the graph and adds nodes to the solution based on greedy approach
 std::vector<Node *> greedy_pick(std::vector<Node *> &graph, int k)
 {
@@ -158,22 +217,25 @@ std::vector<Node *> greedy_pick(std::vector<Node *> &graph, int k)
 
     for (Node *node : graph)
     {
-        if ((std::chrono::steady_clock::now().time_since_epoch().count() / 1e9) - start_time >= 27)
+        if (check_time())
         {
-            terminate_flag = true;
             return graph;
         }
 
         if (node->is_covered)
             continue;
 
-        auto [possible_nodes, node_cover] = get_outer_in_range(node, k);
+        auto [possible_nodes, node_cover] = get_nodes_in_range(node, k);
         Node *best_node = node;
         int highest_cover = node_cover;
 
         for (Node *pos_node : possible_nodes)
         {
-            auto [_, cover_count] = get_outer_in_range(pos_node, k);
+            if (check_time())
+            {
+                return graph;
+            }
+            auto [_, cover_count] = get_nodes_in_range(pos_node, k);
             if (cover_count > highest_cover)
             {
                 best_node = pos_node;
@@ -186,27 +248,8 @@ std::vector<Node *> greedy_pick(std::vector<Node *> &graph, int k)
     return solution;
 }
 
-// combines leaf reduction and greedy pick into one function
-// also checks if program shouldn't be stopped early (needed for big graphs)
-std::vector<Node *> greedy_solve(std::vector<Node *> &graph, int k)
-{
-    std::vector<Node *> solution;
-    auto leaf_solution = leaf_reduction(graph, k);
-    solution.insert(solution.end(), leaf_solution.begin(), leaf_solution.end());
-
-    if (terminate_flag)
-    {
-        return graph;
-    }
-
-    auto greedy_solution = greedy_pick(graph, std::min(2, k));
-    solution.insert(solution.end(), greedy_solution.begin(), greedy_solution.end());
-
-    return solution;
-}
-
-// validates solution based on solution
-bool deep_validate(std::vector<Node *> &graph, const std::vector<Node *> &solution, int k)
+// validates solution
+bool validate(std::vector<Node *> &graph, const std::vector<Node *> &solution, int k)
 {
     for (Node *node : graph)
     {
@@ -221,195 +264,166 @@ bool deep_validate(std::vector<Node *> &graph, const std::vector<Node *> &soluti
                        { return node->is_covered; });
 }
 
-// genetic optimization based on binary array
-std::vector<Node *> genetic_optimization(std::vector<Node *> &graph, const std::vector<Node *> &best_solution, int k)
+bool shallow_validate(std::vector<Node *> &graph)
 {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-
-    // randomly changes one node
-    auto mutate = [&](const std::vector<bool> &solution)
-    {
-        std::vector<bool> mutated = solution;
-        std::uniform_int_distribution<> dis(0, mutated.size() - 1);
-        int index = dis(gen);
-        mutated[index] = !mutated[index];
-        return mutated;
-    };
-
-    // combines first part of solution1 with second part of solution2
-    auto crossover = [&](const std::vector<bool> &solution1, const std::vector<bool> &solution2)
-    {
-        std::vector<bool> child;
-        int mid = solution1.size() / 2;
-        child.insert(child.end(), solution1.begin(), solution1.begin() + mid);
-        child.insert(child.end(), solution2.begin() + mid, solution2.end());
-        return mutate(child);
-    };
-
-    // converts binary solution into normal one
-    auto convert_to_normal = [&](const std::vector<bool> &genetic_solution)
-    {
-        if ((std::chrono::steady_clock::now().time_since_epoch().count() / 1e9) - start_time >= 27)
-        {
-            terminate_flag = true;
-        }
-        std::vector<Node *> result;
-        for (size_t i = 0; i < genetic_solution.size(); ++i)
-        {
-            if (genetic_solution[i])
-            {
-                result.push_back(graph[i]);
-            }
-        }
-        return result;
-    };
-
-    std::vector<bool> converted_sol(graph.size(), false);
-    for (size_t i = 0; i < graph.size(); ++i)
-    {
-        if ((std::chrono::steady_clock::now().time_since_epoch().count() / 1e9) - start_time >= 27)
-        {
-            terminate_flag = true;
-            return best_solution;
-        }
-
-        converted_sol[i] = std::find(best_solution.begin(), best_solution.end(), graph[i]) != best_solution.end();
-    }
-
-    const int population_size = 100;
-    std::vector<std::vector<bool>> population{converted_sol};
-
-    // initial population based on given (greedy) solution
-    for (int i = 1; i < population_size; ++i)
-    {
-        if (terminate_flag)
-            break;
-        population.push_back(mutate(converted_sol));
-    }
-
-    // precomputes if mutated solution is valid
-    std::vector<bool> normal_pop(population_size);
-    for (size_t i = 0; i < population.size() && !terminate_flag; ++i)
-    {
-        normal_pop[i] = deep_validate(graph, convert_to_normal(population[i]), k);
-    }
-
-    if (!terminate_flag)
-    {
-        std::vector<size_t> indices(population.size());
-        std::iota(indices.begin(), indices.end(), 0);
-
-        // sorts solutions based on fitness (the smaller solution the better)
-        // invalid solutions are at the end
-        std::sort(indices.begin(), indices.end(),
-                  [&](size_t i, size_t j)
-                  {
-                      const auto &a = population[i];
-                      const auto &b = population[j];
-                      int count_a = std::count(a.begin(), a.end(), true);
-                      int count_b = std::count(b.begin(), b.end(), true);
-                      bool valid_a = normal_pop[i];
-                      bool valid_b = normal_pop[j];
-                      if (valid_a != valid_b)
-                          return valid_a > valid_b;
-                      return count_a < count_b;
-                  });
-
-        std::vector<std::vector<bool>> sorted_population(population.size());
-        std::vector<bool> sorted_normal_pop(normal_pop.size());
-        for (size_t i = 0; i < indices.size(); ++i)
-        {
-            sorted_population[i] = population[indices[i]];
-            sorted_normal_pop[i] = normal_pop[indices[i]];
-        }
-        population = std::move(sorted_population);
-        normal_pop = std::move(sorted_normal_pop);
-    }
-
-    // optimizes till the end of times
-    while (!terminate_flag)
-    {
-        population.resize(population_size / 2);
-        int temp_size = population.size() - 1;
-
-        while (!terminate_flag && population.size() < population_size)
-        {
-            std::uniform_int_distribution<> dis(0, temp_size);
-            population.push_back(crossover(population[dis(gen)],
-                                           population[dis(gen)]));
-        }
-
-        normal_pop.resize(population.size());
-        for (size_t i = 0; i < population.size() && !terminate_flag; ++i)
-        {
-            normal_pop[i] = deep_validate(graph, convert_to_normal(population[i]), k);
-        }
-
-        if (!terminate_flag)
-        {
-            std::vector<size_t> indices(population.size());
-            std::iota(indices.begin(), indices.end(), 0);
-
-            std::sort(indices.begin(), indices.end(),
-                      [&](size_t i, size_t j)
-                      {
-                          const auto &a = population[i];
-                          const auto &b = population[j];
-                          int count_a = std::count(a.begin(), a.end(), true);
-                          int count_b = std::count(b.begin(), b.end(), true);
-                          bool valid_a = normal_pop[i];
-                          bool valid_b = normal_pop[j];
-                          if (valid_a != valid_b)
-                              return valid_a > valid_b;
-                          return count_a < count_b;
-                      });
-
-            std::vector<std::vector<bool>> sorted_population(population.size());
-            std::vector<bool> sorted_normal_pop(normal_pop.size());
-            for (size_t i = 0; i < indices.size(); ++i)
-            {
-                sorted_population[i] = population[indices[i]];
-                sorted_normal_pop[i] = normal_pop[indices[i]];
-            }
-            population = std::move(sorted_population);
-            normal_pop = std::move(sorted_normal_pop);
-        }
-    }
-
-    return convert_to_normal(population[0]);
+    return std::all_of(graph.begin(), graph.end(), [](Node *node)
+                       { return node->is_covered; });
 }
 
-// when we try to run greedy algorithm on big k (for example k = 5)
-// and the graph is big, then it is too slow
-// that's why I use ramp up approach, so algorithms starts with k = min(2, k)
-// and after solution is found then it tries to find solution for bigger k
-
-std::vector<Node *> ramp_up_runner(std::vector<Node *> &graph, int k)
+void apply_solution(std::vector<Node *> &graph, const std::vector<Node *> &solution, int k)
 {
-    int current_k = std::min(2, k);
-    auto solution = greedy_solve(graph, current_k);
-
-    while (!terminate_flag && current_k < k)
+    for (Node *node : graph)
     {
-        current_k++;
-        for (Node *node : graph)
+        node->is_covered;
+    }
+    for (Node *node : solution)
+    {
+        cover_nodes(node, k);
+    }
+}
+std::vector<Node *> local_improvement(std::vector<Node *> &graph, const std::vector<Node *> &solution, int k)
+{
+    std::vector<Node *> alternative = solution;
+
+    // choose random node
+    std::uniform_int_distribution<> distribution(0, alternative.size() - 1);
+    Node *node = alternative[distribution(gen)];
+
+    // remove node from solution
+    auto it = std::find(alternative.begin(), alternative.end(), node);
+    if (it != alternative.end())
+    {
+        alternative.erase(it);
+    }
+    apply_solution(graph, alternative, k);
+
+    // find new node which doesn't make solution invalid
+    auto [possible_nodes, cover_count] = get_nodes_in_range(node, k);
+    std::shuffle(possible_nodes.begin(), possible_nodes.end(), rd);
+    Node *new_node = node;
+
+    // pick randomly node which
+    while (!possible_nodes.empty())
+    {
+        new_node = possible_nodes.back();
+        possible_nodes.pop_back();
+        cover_nodes(new_node, k);
+        if (shallow_validate(graph))
         {
-            node->is_covered = false;
+            alternative.push_back(new_node);
+            return alternative;
         }
-        auto alternative = greedy_solve(graph, current_k);
+        apply_solution(graph, alternative, k);
+    }
+    return solution;
+}
+
+std::vector<Node *> deconstruction(std::vector<Node *> &graph, std::vector<Node *> &solution, int k, float probability = 0.2)
+{
+    if (check_time())
+    {
+        return solution;
+    }
+    std::vector<Node *> new_solution;
+    std::uniform_real_distribution<> dist(0.0, 1.0);
+
+    // reset graph
+    for (Node *node : graph)
+    {
+        node->is_covered = false;
+    }
+
+    for (Node *node : solution)
+    {
+        if (dist(gen) > probability)
+        {
+            new_solution.push_back(node);
+            cover_nodes(node, k);
+        }
+    }
+    return new_solution;
+}
+
+// local search optimization
+std::vector<Node *> local_search(std::vector<Node *> &graph, std::vector<Node *> &solution, int k)
+{
+    int counter = 0;
+    while (!terminate_flag)
+    {
+        std::vector<Node *> alternative = local_improvement(graph, solution, k);
+        if (check_time())
+        {
+            return solution;
+        }
+        // one in ten times destroy big chunk of graph
+        if (counter % 10 == 0)
+        {
+            alternative = deconstruction(graph, alternative, k, 0.4);
+        }
+        else
+        {
+            alternative = deconstruction(graph, alternative, k, 0.2);
+        }
+        counter += 1;
+
+        if (check_time())
+        {
+            return solution;
+        }
+        std::vector<Node *> greedy_fill = greedy_pick(graph, k);
+        alternative.insert(alternative.end(), greedy_fill.begin(), greedy_fill.end());
 
         if (alternative.size() < solution.size())
         {
             solution = alternative;
         }
+        check_time();
+    }
+    return solution;
+}
+
+// combines all parts into one function
+std::vector<Node *> runner(std::vector<Node *> &graph, int k)
+{
+    std::vector<Node *> solution = ultra_greedy(graph, k);
+
+    // graph reset
+    for (Node *node : graph)
+    {
+        node->is_covered = false;
     }
 
-    // after solution on desired k is found, we can run genetic_optimization
-    if (!terminate_flag)
+    // reduction
+    std::vector<Node *> reduced = reduction(graph, k);
+    if (check_time())
     {
-        solution = genetic_optimization(graph, solution, k);
+        return solution;
     }
+    std::vector<Node *> alternative = greedy_pick(graph, k);
+    alternative.insert(alternative.end(), reduced.begin(), reduced.end());
+
+    if (alternative.size() < solution.size())
+    {
+        solution = alternative;
+    }
+
+    if (check_time())
+    {
+        return solution;
+    }
+
+    // graph reset
+    for (Node *node : graph)
+    {
+        node->is_covered = false;
+    }
+
+    std::vector<Node *> optimized = local_search(graph, solution, k);
+    if (optimized.size() < solution.size())
+    {
+        solution = optimized;
+    }
+
     return solution;
 }
 
@@ -417,16 +431,17 @@ std::vector<Node *> ramp_up_runner(std::vector<Node *> &graph, int k)
 void optilio_run()
 {
     start_time = std::chrono::steady_clock::now().time_since_epoch().count() / 1e9;
+    std::mt19937 gen = std::mt19937(rd());
 
     int n, m;
     std::cin >> n >> m;
 
-    std::vector<Node *> graph;
+    std::vector<Node *> graph(n);
+
     for (int i = 0; i < n; ++i)
     {
-        graph.push_back(new Node(i));
+        graph[i] = new Node(i);
     }
-
     for (int i = 0; i < m; ++i)
     {
         int u, v;
@@ -442,7 +457,7 @@ void optilio_run()
     int k;
     std::cin >> k;
 
-    auto solution = ramp_up_runner(graph, k);
+    auto solution = runner(graph, k);
 
     std::cout << solution.size() << std::endl;
     for (Node *node : solution)
