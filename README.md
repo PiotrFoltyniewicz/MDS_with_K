@@ -9,11 +9,11 @@ Solving this problem was an individual project for university Combinatorial Opti
 ### Approach explanation
 To solve this optimization problem I used GRASP approach.<br>
 This is how step by step it works.
-1. Firstly, program runs an very **quick greedy algorithm**, which doesn't give optimal solutions, however at least it gives solution for very big graphs.
+1. Firstly, program runs an very **quick greedy algorithm**, which doesn't give optimal solution, however at least it gives solution for very big graphs.
 2. Then we run **reduction** function to mark add unconnected nodes to the solution and also find optimal nodes which cover leaf nodes.
 3. With graph reduced, we run more optimal but still **greedy algorithm**, which almost surely will give better result than quick greedy algorithm.
 4. If a solution was found within time limit (30 seconds), we run local search:
-    - **Local improvement** - removing one node from solution and replacing it with another node which doesn't violate solutions validity
+    - **Local improvement** - removing one node from solution and replacing it with another node which doesn't violate solution's validity
     - **Deconstruction** - randomly removing part of the solution (by default 20%)
     - **Reconstruction** - running greedy algorithm from point 3. to fill the gaps in the solution
 5. This local search runs until time limit is achieved, also it is worth noting, that program frequently checks if the time limit is achieved, if so, then program returns the best solution found so far.
